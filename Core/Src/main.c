@@ -26,6 +26,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <time.h>
 
 
@@ -38,10 +39,20 @@ UART_HandleTypeDef huart2;
 
 uint8_t aes_key[16] = "MirilZeynaYumak"; // AES encryption key (16-bytes)
 
+SecureData current_data;
+
+// Receiver state variables
 uint8_t encrypted_buffer[16];
 uint32_t received_time = 0;
 uint8_t received = 0;
-SecureData current_data;
+
+// Transmitter state variables
+uint32_t tx_counter = 0;
+uint32_t last_tx_time = 0;
+
+// Debug buffer
+char debug_buff[128];
+
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -51,27 +62,86 @@ static void MX_CAN2_Init(void);
 static void MX_USART2_UART_Init(void);
 
 
-// AES encryption function
+/**
+  * @brief  AES encryption function
+  * @param  input: Pointer to data
+  * @param  output: Length of data in bytes
+  */
 void encrypt_data(uint8_t* input, uint8_t* output)
 {
+
   struct AES_ctx ctx;
   AES_init_ctx(&ctx, aes_key);
   AES_ECB_encrypt(&ctx, input);
   memcpy(output, input, 16);
+
 }
 
-// AES decryption function
+/**
+  * @brief  AES decryption function
+  * @param  input: Pointer to data
+  * @param  output: Length of data in bytes
+  */
 void decrypt_data(uint8_t* input, uint8_t* output)
 {
+
   struct AES_ctx ctx;
   AES_init_ctx(&ctx, aes_key);
   AES_ECB_decrypt(&ctx, input);
   memcpy(output, input, 16);
+
+}
+
+/**
+  * @brief  Hardware-accelerated CRC calculation
+  * @param  data: Pointer to data
+  * @param  len: Length of data in bytes
+  * @retval CRC-32 value
+  */
+uint32_t calculate_crc(void *data, size_t len)
+{
+
+  __HAL_RCC_CRC_CLK_ENABLE(); // Enable CRC clock
+  CRC->CR = CRC_CR_RESET;     // Reset CRC calculator
+
+  uint32_t *ptr = (uint32_t*)data;
+  size_t word_count = len / 4;
+
+  // Process 32-bit words
+  for(size_t i = 0; i < word_count; i++) {
+    CRC->DR = __builtin_bswap32(*ptr++);
+  }
+
+  // Process remaining bytes
+  if(len % 4) {
+    uint32_t temp = 0;
+    memcpy(&temp, ptr, len % 4);
+    CRC->DR = __builtin_bswap32(temp);
+  }
+
+  return CRC->DR;
+
 }
 
 float read_sensor(void)
 {
 	return ((float)rand()/(float)(RAND_MAX)) * SENSOR_CONST;
+}
+
+/**
+  * @brief  Print debug messages over USART2
+  * @param  format: printf-style format string
+  */
+
+void debug_print(const char *format, ...)
+{
+
+  va_list args;
+  va_start(args, format);
+  vsnprintf(debug_buf, sizeof(debug_buf), format, args);
+  va_end(args);
+  if(HAL_UART_Transmit(&huart2, (uint8_t*)debug_buf, strlen(debug_buf), 100) != HAL_OK) printf("UART Transmit error\n");
+
 }
 
 /**
