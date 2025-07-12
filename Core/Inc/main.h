@@ -46,7 +46,7 @@ extern "C" {
 typedef struct {
 	uint32_t counter;
 	uint32_t timestamp;
-	float sensor_val;
+	uint16_t sensor_val;
 	uint32_t crc;
 } SecureData;
 
@@ -55,15 +55,17 @@ typedef enum {
 	MODE_TRANSMITTER
 } OperationMode;
 
+SecureData current_data;
+
 /* Functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
-void encrypt_data(uint8_t* input, uint8_t* output);
-void decrypt_data(uint8_t* input, uint8_t* output);
+void encrypt_data(uint16_t* input, uint16_t* output);
+void decrypt_data(uint16_t* input, uint16_t* output);
 uint32_t calculate_crc(void *data, size_t len);
 float read_sensor(void);
 void process_secure_data(SecureFrame *frame);
-void debug_print(const char *format, ...)
+void debug_print(const char *format, ...);
 
 
 #ifdef __cplusplus

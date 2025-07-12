@@ -93,64 +93,126 @@ void SysTick_Handler(void)
 /* please refer to the startup file (startup_stm32f4xx.s).                    */
 /******************************************************************************/
 
+
+/**
+  * @brief  Prepare and send secure data
+  */
 void send_dual_can(CAN_HandleTypeDef *hcan1, CAN_HandleTypeDef *hcan2)
 {
 
-  // Encrypt data
-  uint8_t encrypted[16];
-  encrypt_data((uint8_t*)&tx_data, encrypted);
+	// Prepare secure data
+	SecureData data;
+	data.counter = tx_counter++;
+	data.timestamp = HAL_GetTick();
+	data.sensor_value = read_sensor(); // Simulate sensor data
+	data.crc = calculate_crc(&data, sizeof(SecureData) - sizeof(uint32_t));
 
-  // Split the data into two parts
-  uint8_t part1[8], part2[8];
-  memcpy(part1, encrypted, 8);     // First 8-bytes
-  memcpy(part2, encrypted+8, 8);   // Last 8-bytes
+	// Encrypt data
+	uint16_t encrypted[16];
+	encrypt_data((uint16_t*)&data, encrypted);
 
-  // Send to CAN1 and CAN2 simultaneously
-  CAN_TxHeaderTypeDef tx_header = {
-    .StdId = 0x123,     // Standart ID
-    .RTR = CAN_RTR_DATA,
-    .IDE = CAN_ID_STD,
-    .DLC = 8,           // 8 byte veri
-    .TransmitGlobalTime = DISABLE
-  };
+	// Split into two CAN datas
+	uint8_t part1[8], part2[8];
+	memcpy(part1, encrypted, 8);
+	memcpy(part2, encrypted + 8, 8);
 
-  uint32_t mailbox;
-  HAL_CAN_AddTxMessage(hcan1, &tx_header, part1, &mailbox);
-  HAL_CAN_AddTxMessage(hcan2, &tx_header, part2, &mailbox);
+	// Prepare CAN headers
+	CAN_TxHeaderTypeDef tx_header = {
+			.StdId = CAN_ID_data1,  // Standard ID
+			.ExtId = 0,
+			.RTR = CAN_RTR_DATA,     // Data data
+			.IDE = CAN_ID_STD,       // Standard identifier
+			.DLC = 8,                // Data length: 8 bytes
+			.TransmitGlobalTime = DISABLE
+	};
+
+	// Send data parts
+	uint32_t mailbox;
+	HAL_StatusTypeDef status;
+
+	// Send part1 on CAN1
+	status = HAL_CAN_AddTxMessage(&hcan1, &tx_header, part1, &mailbox);
+
+	if(status != HAL_OK)
+	{
+		debug_print("CAN [TX] CAN1 error: %d\\r\\n", status);
+	}
+
+	// Send part2 on CAN2 with different ID
+	tx_header.StdId = CAN_ID_data2;
+	status = HAL_CAN_AddTxMessage(&hcan2, &tx_header, part2, &mailbox);
+
+	if(status != HAL_OK)
+	{
+		debug_print("CAN [TX] CAN2 error: %d\\r\\n", status);
+	}
+
+	debug_print("CAN [TX] Sent data #%lu\\r\\n", data.counter);
 }
 
-uint8_t rx_buffer[16];
-uint32_t last_rx_time = 0;
 
+/**
+  * @brief  CAN reception callback
+  * @param  hcan: Pointer to CAN handle
+  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
 
-  CAN_RxHeaderTypeDef rx_header;
-  uint8_t rx_data[8];
+	CAN_RxHeaderTypeDef rx_header;
+	uint8_t rx_data[8];
 
-  // Determine which CAN port the message came from
-  if(hcan == &hcan1) {
-    HAL_CAN_GetRxMessage(&hcan1, CAN_RX_FIFO0, &rx_header, rx_data);
-    memcpy(rx_buffer, rx_data, 8);  // first partt
-    last_rx_time = HAL_GetTick();
-  }
-  else if(hcan == &hcan2) {
-    HAL_CAN_GetRxMessage(&hcan2, CAN_RX_FIFO0, &rx_header, rx_data);
-    memcpy(rx_buffer+8, rx_data, 8); // second part
+	// Read received message
+	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx_header, rx_data);
 
-    // Time control (if arrived within 10ms)
-    if((HAL_GetTick() - last_rx_time) < 10) {
-      // Decrypt data
-      uint8_t decrypted[16];
-      decrypt_data(rx_buffer, decrypted);
-      memcpy(&rx_data, decrypted, sizeof(SecureData));
+	// Process based on CAN bus and data ID
+	if(hcan->Instance == CAN1 && rx_header.StdId == CAN_ID_data1)
+	{
+		// First data received on CAN1
+	    memcpy(encrypted_buffer, rx_data, 8);
+	    data1_received_time = HAL_GetTick();
+	    data1_received = 1;
+	    debug_print("CAN [RX] data1 received\\r\\n");
+	}
 
-      // 6. CRC check
-      if(rx_data.crc == calculate_crc(&rx_data, sizeof(SecureData)-4)) {
-        // secure data processing
-        process_secure_data(&rx_data);
+	else if(hcan->Instance == CAN2 && rx_header.StdId == CAN_ID_data2)
+	{
+	    // Second data received on CAN2
+	    if(data1_received)
+	    {
+	    	uint32_t time_delta = HAL_GetTick() - data1_received_time;
 
-      }
-    }
-  }
+	    	if(time_delta < data_TIMEOUT_MS)
+	    	{
+	    		// Copy second part
+	    		memcpy(encrypted_buffer + 8, rx_data, 8);
+
+	    		// Decrypt and process
+	    		uint8_t decrypted[16];
+	    		decrypt_data(encrypted_buffer, decrypted);
+
+	    		// Copy to data structure
+	    		memcpy(&current_data, decrypted, sizeof(SecureData));
+	    		process_secure_data(&current_data);
+	    	}
+
+	    	else
+	    	{
+	    		debug_print("CAN [RX] ERROR: data2 timeout! Delta: %lums\\r\\n", time_delta);
+	    	}
+
+	    	// Reset state
+	    	data1_received = 0;
+	    }
+	    else
+	    {
+	      debug_print("CAN [RX] ERROR: data2 without data1!\\r\\n");
+	    }
+
+	}
+
+	else
+	{
+		debug_print("CAN [RX] ERROR!\\r\\n");
+	}
+
 }

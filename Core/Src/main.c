@@ -39,8 +39,6 @@ UART_HandleTypeDef huart2;
 
 uint8_t aes_key[16] = "MirilZeynaYumak"; // AES encryption key (16-bytes)
 
-SecureData current_data;
-
 // Receiver state variables
 uint8_t encrypted_buffer[16];
 uint32_t received_time = 0;
@@ -67,13 +65,13 @@ static void MX_USART2_UART_Init(void);
   * @param  input: Pointer to data
   * @param  output: Length of data in bytes
   */
-void encrypt_data(uint8_t* input, uint8_t* output)
+void encrypt_data(uint16_t* input, uint16_t* output)
 {
 
   struct AES_ctx ctx;
   AES_init_ctx(&ctx, aes_key);
   AES_ECB_encrypt(&ctx, input);
-  memcpy(output, input, 8);
+  memcpy(output, input, 16);
 
 }
 
@@ -82,13 +80,13 @@ void encrypt_data(uint8_t* input, uint8_t* output)
   * @param  input: Pointer to data
   * @param  output: Length of data in bytes
   */
-void decrypt_data(uint8_t* input, uint8_t* output)
+void decrypt_data(uint16_t* input, uint16_t* output)
 {
 
   struct AES_ctx ctx;
   AES_init_ctx(&ctx, aes_key);
   AES_ECB_decrypt(&ctx, input);
-  memcpy(output, input, 8);
+  memcpy(output, input, 16);
 
 }
 
@@ -125,39 +123,39 @@ uint32_t calculate_crc(void *data, size_t len)
 
 /**
   * @brief  Process received secure data
-  * @param  frame: Pointer to decrypted frame
+  * @param  data: Pointer to decrypted data
   */
-void process_secure_data(SecureFrame *frame) {
-  // 1. Check timestamp freshness
+void process_secure_data(SecureData *data) {
+  // Check timestamp freshness
   uint32_t current_time = HAL_GetTick();
-  uint32_t time_delta = current_time - frame->timestamp;
+  uint32_t time_delta = current_time - data->timestamp;
 
   if(time_delta > STALE_DATA_MS) {
     debug_print("[SEC] WARNING: Stale data! Delta: %lums\\r\\n", time_delta);
     return;
   }
 
-  // 2. Verify CRC
-  uint32_t calculated_crc = calculate_crc(frame, sizeof(SecureFrame) - sizeof(uint32_t));
+  // Verify CRC
+  uint32_t calculated_crc = calculate_crc(frame, sizeof(SecureData) - sizeof(uint32_t));
 
   if(frame->crc != calculated_crc) {
     debug_print("[SEC] ERROR: CRC mismatch! Exp:0x%lX, Act:0x%lX\\r\\n",
-                calculated_crc, frame->crc);
+                calculated_crc, data->crc);
     return;
   }
 
-  // 3. Process valid data
+  // Process valid data
   debug_print("[SEC] Valid data: #%lu, Val:%.2f, Age:%lums\\r\\n",
-              frame->counter, frame->sensor_value, time_delta);
+              data->counter, data->sensor_value, time_delta);
 
-  // 4. Visual indicator
+  // Visual indicator
   HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12); // Toggle LED
 }
 
 
-float read_sensor(void)
+uint16_t read_sensor(void)
 {
-	return ((float)rand()/(float)(RAND_MAX)) * SENSOR_CONST;
+	return (uint16_t)randn() * SENSOR_CONST;
 }
 
 /**
