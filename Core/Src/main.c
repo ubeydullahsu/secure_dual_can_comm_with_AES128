@@ -36,8 +36,12 @@ CAN_HandleTypeDef hcan2;
 
 UART_HandleTypeDef huart2;
 
-uint8_t aes_key[16] = "MirilZeynaYumak";
-SecureData rx_data, tx_data;
+uint8_t aes_key[16] = "MirilZeynaYumak"; // AES encryption key (16-bytes)
+
+uint8_t encrypted_buffer[16];
+uint32_t received_time = 0;
+uint8_t received = 0;
+SecureData current_data;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
