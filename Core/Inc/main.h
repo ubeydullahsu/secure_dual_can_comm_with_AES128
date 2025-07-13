@@ -44,11 +44,6 @@ extern "C" {
 #define FRAME_TIMEOUT_MS   10      // Max time between frames
 #define STALE_DATA_MS      500     // Data older than 500ms is stale
 
-// Uncomment based on node role
-//#define NODE_ROLE MODE_TRANSMITTER
-#define NODE_ROLE MODE_RECEIVER
-/* USER CODE END PD */
-
 typedef struct {
 	uint32_t counter;
 	uint32_t timestamp;
@@ -60,6 +55,11 @@ typedef enum {
 	MODE_RECEIVER,
 	MODE_TRANSMITTER
 } OperationMode;
+
+// Uncomment based on node role
+//#define NODE_ROLE MODE_TRANSMITTER
+#define NODE_ROLE MODE_RECEIVER
+/* USER CODE END PD */
 
 /* Functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
