@@ -1,11 +1,9 @@
 # secure_dual_can_comm_with_AES128
 **ISO/SAE 21434 Compliant Automotive Cybersecurity Solution for Legacy CAN Systems**
 
-[ISO/SAE 21434](https://img.shields.io/badge/Compliance-ISO%2FSAE%2021434%3A2021-red)
-
-[STM32](https://img.shields.io/badge/Platform-STM32F4VE-blue)
-
-[License](https://img.shields.io/badge/License-MIT-green)
+[![ISO/SAE 21434](https://img.shields.io/badge/Compliance-ISO%2FSAE%2021434%3A2021-red)](https://en.wikipedia.org/wiki/ISO/SAE_21434)
+[![STM32](https://img.shields.io/badge/Platform-STM32F4VE-blue)](https://www.st.com/en/microcontrollers-microprocessors/stm32f4-series.html)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](https://opensource.org/licenses/MIT)
 
 ## Project Overview
 
