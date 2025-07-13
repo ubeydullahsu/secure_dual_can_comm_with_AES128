@@ -156,7 +156,7 @@ ISO/SAE 21434 Compliant Prototype
 | **Memory Footprint** | 27.3KB Flash | <32KB |
 
 
-### Security Validation
+## Security Validation
 
 | Attack Type | System Response | Compliance Clause |
 | --- | --- | --- |
@@ -165,6 +165,7 @@ ISO/SAE 21434 Compliant Prototype
 | **Bus Flooding** | "ERROR: Timeout!" | ISO 21434 15.4.2 |
 | **Single Bus Failure** (To Do) | Graceful Degradation | ISO 21434 11.5.2 |
 | **Fault Injection** (To Do)| Watchdog Reset (1.2s) | ISO 21434 11.5.3 |
+
 
 ## Future Improvements
 
