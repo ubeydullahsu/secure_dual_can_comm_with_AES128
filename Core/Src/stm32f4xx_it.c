@@ -20,6 +20,20 @@
 #include "main.h"
 #include "stm32f4xx_it.h"
 
+extern SecureData current_data;
+
+// Receiver state variables
+extern uint8_t encrypted_buffer[16];
+extern uint32_t received_time;
+extern uint8_t received;
+
+// Transmitter state variables
+extern uint32_t tx_counter;
+extern uint32_t last_tx_time;
+
+// Debug buffer
+extern char debug_buff[128];
+
 /******************************************************************************/
 /*           Cortex-M4 Processor Interruption and Exception Handlers          */
 /******************************************************************************/
@@ -104,12 +118,12 @@ void send_dual_can(CAN_HandleTypeDef *hcan1, CAN_HandleTypeDef *hcan2)
 	SecureData data;
 	data.counter = tx_counter++;
 	data.timestamp = HAL_GetTick();
-	data.sensor_value = read_sensor(); // Simulate sensor data
+	data.sensor_val = read_sensor(); // Simulate sensor data
 	data.crc = calculate_crc(&data, sizeof(SecureData) - sizeof(uint32_t));
 
 	// Encrypt data
-	uint16_t encrypted[16];
-	encrypt_data((uint16_t*)&data, encrypted);
+	uint8_t encrypted[16];
+	encrypt_data((uint8_t*)&data, encrypted);
 
 	// Split into two CAN datas
 	uint8_t part1[8], part2[8];
@@ -118,7 +132,7 @@ void send_dual_can(CAN_HandleTypeDef *hcan1, CAN_HandleTypeDef *hcan2)
 
 	// Prepare CAN headers
 	CAN_TxHeaderTypeDef tx_header = {
-			.StdId = CAN_ID_data1,  // Standard ID
+			.StdId = CAN_ID_FRAME1,  // Standard ID
 			.ExtId = 0,
 			.RTR = CAN_RTR_DATA,     // Data data
 			.IDE = CAN_ID_STD,       // Standard identifier
@@ -131,7 +145,7 @@ void send_dual_can(CAN_HandleTypeDef *hcan1, CAN_HandleTypeDef *hcan2)
 	HAL_StatusTypeDef status;
 
 	// Send part1 on CAN1
-	status = HAL_CAN_AddTxMessage(&hcan1, &tx_header, part1, &mailbox);
+	status = HAL_CAN_AddTxMessage(hcan1, &tx_header, part1, &mailbox);
 
 	if(status != HAL_OK)
 	{
@@ -139,8 +153,8 @@ void send_dual_can(CAN_HandleTypeDef *hcan1, CAN_HandleTypeDef *hcan2)
 	}
 
 	// Send part2 on CAN2 with different ID
-	tx_header.StdId = CAN_ID_data2;
-	status = HAL_CAN_AddTxMessage(&hcan2, &tx_header, part2, &mailbox);
+	tx_header.StdId = CAN_ID_FRAME1;
+	status = HAL_CAN_AddTxMessage(hcan2, &tx_header, part2, &mailbox);
 
 	if(status != HAL_OK)
 	{
@@ -165,23 +179,23 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx_header, rx_data);
 
 	// Process based on CAN bus and data ID
-	if(hcan->Instance == CAN1 && rx_header.StdId == CAN_ID_data1)
+	if(hcan->Instance == CAN1 && rx_header.StdId == CAN_ID_FRAME1)
 	{
 		// First data received on CAN1
 	    memcpy(encrypted_buffer, rx_data, 8);
-	    data1_received_time = HAL_GetTick();
-	    data1_received = 1;
+	    received_time = HAL_GetTick();
+	    received = 1;
 	    debug_print("CAN [RX] data1 received\\r\\n");
 	}
 
-	else if(hcan->Instance == CAN2 && rx_header.StdId == CAN_ID_data2)
+	else if(hcan->Instance == CAN2 && rx_header.StdId == CAN_ID_FRAME2)
 	{
 	    // Second data received on CAN2
-	    if(data1_received)
+	    if(received)
 	    {
-	    	uint32_t time_delta = HAL_GetTick() - data1_received_time;
+	    	uint32_t time_delta = HAL_GetTick() - received_time;
 
-	    	if(time_delta < data_TIMEOUT_MS)
+	    	if(time_delta < FRAME_TIMEOUT_MS)
 	    	{
 	    		// Copy second part
 	    		memcpy(encrypted_buffer + 8, rx_data, 8);
@@ -201,7 +215,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    	}
 
 	    	// Reset state
-	    	data1_received = 0;
+	    	received = 0;
 	    }
 	    else
 	    {

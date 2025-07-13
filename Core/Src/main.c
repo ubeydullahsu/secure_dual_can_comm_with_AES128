@@ -22,12 +22,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_hal.h"
+#include "stm32f4xx_it.h"
 #include "aes.h" // Tiny-AES library
-
-#include <string.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <time.h>
 
 
 
@@ -38,6 +34,8 @@ CAN_HandleTypeDef hcan2;
 UART_HandleTypeDef huart2;
 
 uint8_t aes_key[16] = "MirilZeynaYumak"; // AES encryption key (16-bytes)
+
+SecureData current_data;
 
 // Receiver state variables
 uint8_t encrypted_buffer[16];
@@ -58,6 +56,8 @@ static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_CAN2_Init(void);
 static void MX_USART2_UART_Init(void);
+void init_can(void);
+void init_crypto(void);
 
 
 /**
@@ -65,12 +65,12 @@ static void MX_USART2_UART_Init(void);
   * @param  input: Pointer to data
   * @param  output: Length of data in bytes
   */
-void encrypt_data(uint16_t* input, uint16_t* output)
+void encrypt_data(uint8_t* input, uint8_t* output)
 {
 
   struct AES_ctx ctx;
   AES_init_ctx(&ctx, aes_key);
-  AES_ECB_encrypt(&ctx, input);
+  AES_ECB_encrypt(&ctx, (uint8_t*)input);
   memcpy(output, input, 16);
 
 }
@@ -80,12 +80,12 @@ void encrypt_data(uint16_t* input, uint16_t* output)
   * @param  input: Pointer to data
   * @param  output: Length of data in bytes
   */
-void decrypt_data(uint16_t* input, uint16_t* output)
+void decrypt_data(uint8_t* input, uint8_t* output)
 {
 
   struct AES_ctx ctx;
   AES_init_ctx(&ctx, aes_key);
-  AES_ECB_decrypt(&ctx, input);
+  AES_ECB_decrypt(&ctx, (uint8_t*)input);
   memcpy(output, input, 16);
 
 }
@@ -106,12 +106,14 @@ uint32_t calculate_crc(void *data, size_t len)
   size_t word_count = len / 4;
 
   // Process 32-bit words
-  for(size_t i = 0; i < word_count; i++) {
+  for(size_t i = 0; i < word_count; i++)
+  {
     CRC->DR = __builtin_bswap32(*ptr++);
   }
 
   // Process remaining bytes
-  if(len % 4) {
+  if(len % 4)
+  {
     uint32_t temp = 0;
     memcpy(&temp, ptr, len % 4);
     CRC->DR = __builtin_bswap32(temp);
@@ -125,37 +127,40 @@ uint32_t calculate_crc(void *data, size_t len)
   * @brief  Process received secure data
   * @param  data: Pointer to decrypted data
   */
-void process_secure_data(SecureData *data) {
-  // Check timestamp freshness
-  uint32_t current_time = HAL_GetTick();
-  uint32_t time_delta = current_time - data->timestamp;
+void process_secure_data(SecureData *data)
+{
+	// Check timestamp freshness
+	uint32_t current_time = HAL_GetTick();
+	uint32_t time_delta = current_time - data->timestamp;
 
-  if(time_delta > STALE_DATA_MS) {
-    debug_print("[SEC] WARNING: Stale data! Delta: %lums\\r\\n", time_delta);
-    return;
-  }
+	if(time_delta > STALE_DATA_MS)
+	{
+		debug_print("[SEC] WARNING: Stale data! Delta: %lums\\r\\n", time_delta);
+		return;
+	}
 
-  // Verify CRC
-  uint32_t calculated_crc = calculate_crc(frame, sizeof(SecureData) - sizeof(uint32_t));
+	// Verify CRC
+	uint32_t calculated_crc = calculate_crc(data, sizeof(SecureData) - sizeof(uint32_t));
 
-  if(frame->crc != calculated_crc) {
-    debug_print("[SEC] ERROR: CRC mismatch! Exp:0x%lX, Act:0x%lX\\r\\n",
+	if(data->crc != calculated_crc)
+	{
+		debug_print("[SEC] ERROR: CRC mismatch! Exp:0x%lX, Act:0x%lX\\r\\n",
                 calculated_crc, data->crc);
-    return;
-  }
+		return;
+	}
 
-  // Process valid data
-  debug_print("[SEC] Valid data: #%lu, Val:%.2f, Age:%lums\\r\\n",
-              data->counter, data->sensor_value, time_delta);
+	// Process valid data
+	debug_print("[SEC] Valid data: #%lu, Val:%.2f, Age:%lums\\r\\n",
+              data->counter, data->sensor_val, time_delta);
 
-  // Visual indicator
-  HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12); // Toggle LED
+	// Visual indicator
+	HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_6); // Toggle LED
 }
 
 
 uint16_t read_sensor(void)
 {
-	return (uint16_t)randn() * SENSOR_CONST;
+	return (uint16_t)(rand() * SENSOR_CONST);
 }
 
 /**
@@ -168,10 +173,9 @@ void debug_print(const char *format, ...)
 
   va_list args;
   va_start(args, format);
-  vsnprintf(debug_buf, sizeof(debug_buf), format, args);
+  vsnprintf(debug_buff, sizeof(debug_buff), format, args);
   va_end(args);
-  if(HAL_UART_Transmit(&huart2, (uint8_t*)debug_buf, strlen(debug_buf), 100) != HAL_OK) printf("UART Transmit error\n");
-
+  HAL_UART_Transmit(&huart2, (uint8_t*)debug_buff, strlen(debug_buff), 100);
 }
 
 /**
@@ -193,27 +197,55 @@ int main(void)
   MX_CAN2_Init();
   MX_USART2_UART_Init();
 
-  srand((unsigned int)time(NULL));
+  // Initialize cryptographic hardware
+  init_crypto();
 
-  uint32_t counter = 0;
+  // Initialize CAN peripherals
+  init_can();
+
+  // Print system information
+  debug_print("\\r\\n\\r\\n=== Dual-CAN Security Gateway ===\\r\\n");
+  debug_print("System Clock: %lu Hz\\r\\n", HAL_RCC_GetHCLKFreq());
+  debug_print("ISO/SAE 21434 Compliant Prototype\\r\\n");
+
+  // Initial LED state
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_SET);
+  HAL_Delay(200);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
+
+
+  srand((unsigned int)time(NULL));
 
   /* Infinite loop */
   while (1)
   {
 
-	  // transmit encrypted sensor value
-	  tx_data.counter = counter++;
-	  tx_data.timestamp = HAL_GetTick();
-	  tx_data.sensor_value = read_sensor();
-	  tx_data.crc = calculate_crc(&tx_data, sizeof(SecureData)-4);
+	  // Receiver mode - nothing to do in main loop
+	  if(NODE_ROLE == MODE_RECEIVER)
+	  {
+		  HAL_Delay(100);
 
-	  send_dual_can(&hcan1, &hcan2);
+	  }
 
-	  // The transaction is carried out with automatic callback on the receiving side.
-	  HAL_Delay(1000); // send every 1 second
+	  // Transmitter mode - send data periodically
+	  else if(NODE_ROLE == MODE_TRANSMITTER)
+	  {
 
-	  // Debugging output
-	  printf("Data sent: %lu\\r\\n", tx_data.counter);
+		  uint32_t current_time = HAL_GetTick();
+
+	      // Send data at fixed interval
+	      if((current_time - last_tx_time) >= TX_INTERVAL_MS)
+	      {
+	    	  send_dual_can(&hcan1, &hcan2);
+	    	  last_tx_time = current_time;
+
+	    	  // Toggle LED on successful transmission
+	    	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_7);
+	      }
+
+	      HAL_Delay(10);
+
+	  }
 
   }
 
@@ -316,6 +348,67 @@ static void MX_CAN2_Init(void)
   {
     Error_Handler();
   }
+
+}
+
+/**
+  * @brief  Initialize CAN peripherals
+  */
+void init_can(void)
+{
+
+	// Configure CAN filters
+	CAN_FilterTypeDef filter_config = {
+			.FilterIdHigh = 0x0000,
+			.FilterIdLow = 0x0000,
+			.FilterMaskIdHigh = 0x0000,
+			.FilterMaskIdLow = 0x0000,
+			.FilterFIFOAssignment = CAN_RX_FIFO0,
+			.FilterBank = 0,
+			.FilterMode = CAN_FILTERMODE_IDMASK,
+			.FilterScale = CAN_FILTERSCALE_32BIT,
+			.FilterActivation = ENABLE,
+			.SlaveStartFilterBank = 14
+	};
+
+	// Apply filters to both CAN controllers
+	HAL_CAN_ConfigFilter(&hcan1, &filter_config);
+	HAL_CAN_ConfigFilter(&hcan2, &filter_config);
+
+	// Start CAN controllers
+	HAL_CAN_Start(&hcan1);
+	HAL_CAN_Start(&hcan2);
+
+	// Activate RX notifications
+	HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+	HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+	// Configure interrupts
+	HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
+	HAL_NVIC_SetPriority(CAN2_RX0_IRQn, 5, 0);
+	HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+	HAL_NVIC_EnableIRQ(CAN2_RX0_IRQn);
+
+	// For TX interrupt (optional)
+	//HAL_NVIC_SetPriority(CAN1_TX_IRQn, 3, 0);
+	//HAL_NVIC_SetPriority(CAN2_TX_IRQn, 3, 0);
+	//HAL_NVIC_EnableIRQ(CAN1_TX_IRQn);
+	//HAL_NVIC_EnableIRQ(CAN2_TX_IRQn);
+
+	debug_print("[CAN] Initialized with %s mode\\r\\n",
+              (NODE_ROLE == MODE_RECEIVER) ? "RECEIVER" : "TRANSMITTER");
+
+}
+
+/**
+  * @brief  Initialize cryptographic peripherals
+  */
+void init_crypto(void)
+{
+
+  // Enable CRC clock
+  __HAL_RCC_CRC_CLK_ENABLE();
+  debug_print("[CRYPTO] Hardware CRC enabled\\r\\n");
 
 }
 
