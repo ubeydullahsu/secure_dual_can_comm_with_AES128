@@ -156,8 +156,6 @@ ISO/SAE 21434 Compliant Prototype
 | **Memory Footprint** | 27.3KB Flash | <32KB |
 
 
-## Test Results
-
 ### Security Validation
 
 | Attack Type | System Response | Compliance Clause |
